@@ -1,0 +1,1029 @@
+NEUSE RIVER / HURRICANE FLORENCE 2018
+COMPLETE CLEAN REPRODUCIBLE WORKFLOW — RECOVERED
+=================================================
+
+Run all commands from the project root, top to bottom.
+
+RETAINED SCIENTIFIC POLICY
+--------------------------
+- Generic retained naming only: Physics and ML in the runbook interface.
+- Physics calibration: 2015-2016.
+- Temporal holdout/model check: 2017.
+- Hurricane Florence 2018 is not used by the clean training commands.
+- ML uses exogenous rainfall/routing features only; no observed-Q lag or recursive-Q state.
+- Model validation/comparison is performed ONLY by src/comparison.py.
+- Landsat, Sentinel-1 and Copernicus flood-extent validation are NOT part of this workflow.
+- Copernicus EMSR311 is used only to recover the published Goldsboro analysis-AOI boundary.
+- Two flood branches are retained:
+    A) NOAA FIM limited/small domain, based on stage/WSE matching.
+    B) Full original AOI, based on Physics/ML model-generated flood rasters.
+- Two corresponding impact branches are retained.
+- Current OSM is a present-day exposure proxy, not an exact September 2018 inventory.
+
+GOOGLE EARTH ENGINE PROJECT
+---------------------------------
+third-oarlock-496708-n7
+
+
+========================================================================================
+0. ENVIRONMENT
+========================================================================================
+python3.13 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
+python -m pip check
+python src/environment_check.py
+
+earthengine authenticate
+# ERA5 download commands require ~/.cdsapirc with valid CDS credentials.
+`````````````````````````````````````````````
+nano ~/.cdsapirc
+url: https://cds.climate.copernicus.eu/api
+key: b69fe2e9-c6b8-4bc8-a18b-848df841f564
+`````````````````````````````````````````````
+
+========================================================================================
+1. USGS FLORENCE OBSERVATIONS
+========================================================================================
+python src/observations/download_usgs_observations.py \
+  --site 02089000 \
+  --start 2018-09-10 \
+  --end 2018-09-25 \
+  --output-dir input/observations/usgs/02089000/florence_2018 \
+  --overwrite
+
+python src/observations/download_usgs_rating_curve.py \
+  --site 02089000 \
+  --event-date 2018-09-18 \
+  --output-dir input/observations/usgs/02089000/ratings \
+  --overwrite
+
+python src/observations/discover_historical_usgs_rating.py \
+  --site 02089000 \
+  --event-date 2018-09-18 \
+  --archive-from-year 2017 \
+  --archive-to-year 2019 \
+  --current-rating-dir input/observations/usgs/02089000/ratings \
+  --output-dir input/observations/usgs/02089000/historical_rating_discovery \
+  --overwrite
+
+python src/observations/download_usgs_field_measurements.py \
+  --site 02089000 \
+  --start-year 2017 \
+  --end-year 2019 \
+  --event-date 2018-09-18 \
+  --event-window-days 180 \
+  --output-dir input/observations/usgs/02089000/field_measurements \
+  --overwrite
+
+
+========================================================================================
+2. FLORENCE EFFECTIVE H-Q RELATIONSHIP
+========================================================================================
+python src/observations/build_florence_hq_surrogate.py \
+  --event-observations input/observations/usgs/02089000/florence_2018/usgs_event_observations.csv \
+  --event-metadata input/observations/usgs/02089000/florence_2018/usgs_event_observations_metadata.json \
+  --stage-step-ft 0.01 \
+  --discharge-step-cfs 25 \
+  --output-dir output/observations/florence_hq \
+  --overwrite
+
+python src/observations/check_florence_hq_surrogate.py \
+  --event-observations input/observations/usgs/02089000/florence_2018/usgs_event_observations.csv \
+  --surrogate-h-to-q output/observations/florence_hq/florence_effective_h_to_q_surrogate.csv \
+  --surrogate-metadata output/observations/florence_hq/florence_effective_hq_metadata.json \
+  --field-measurements input/observations/usgs/02089000/field_measurements/usgs_field_measurements_paired_hq.csv \
+  --max-time-interpolation-gap-minutes 30 \
+  --output-dir output/observations/florence_hq_check \
+  --overwrite
+
+python src/observations/create_hq_manifest.py \
+  --site 02089000 \
+  --event-observations input/observations/usgs/02089000/florence_2018/usgs_event_observations.csv \
+  --field-measurements input/observations/usgs/02089000/field_measurements/usgs_field_measurements_paired_hq.csv \
+  --h-to-q output/observations/florence_hq/florence_effective_h_to_q_surrogate.csv \
+  --q-to-h output/observations/florence_hq/florence_effective_q_to_h_surrogate.csv \
+  --surrogate-metadata output/observations/florence_hq/florence_effective_hq_metadata.json \
+  --reconstruction-fidelity output/observations/florence_hq/florence_hq_reconstruction_fidelity.csv \
+  --field-validation-results output/observations/florence_hq_check/field_hq_validation_results.csv \
+  --field-validation-metadata output/observations/florence_hq_check/field_hq_validation_metadata.json \
+  --output input/observations/usgs/02089000/florence_hq_manifest.json \
+  --overwrite
+
+python src/observations/check_florence_hq_artifact.py \
+  --event-observations input/observations/usgs/02089000/florence_2018/usgs_event_observations.csv \
+  --field-measurements input/observations/usgs/02089000/field_measurements/usgs_field_measurements_paired_hq.csv \
+  --h-to-q output/observations/florence_hq/florence_effective_h_to_q_surrogate.csv \
+  --q-to-h output/observations/florence_hq/florence_effective_q_to_h_surrogate.csv \
+  --surrogate-metadata output/observations/florence_hq/florence_effective_hq_metadata.json \
+  --reconstruction-fidelity output/observations/florence_hq/florence_hq_reconstruction_fidelity.csv \
+  --field-validation-results output/observations/florence_hq_check/field_hq_validation_results.csv \
+  --field-validation-metadata output/observations/florence_hq_check/field_hq_validation_metadata.json \
+  --validated-manifest input/observations/usgs/02089000/florence_hq_manifest.json \
+  --output-dir output/observations/florence_hq_preflight \
+  --overwrite
+
+
+========================================================================================
+3. STUDY DOMAINS
+========================================================================================
+python src/spatial/prepare_upstream_watershed.py \
+  --site 02089000 \
+  --expected-lon -77.9975 \
+  --expected-lat 35.3375 \
+  --published-drainage-area-sqmi 2399 \
+  --max-drainage-area-difference-percent 5 \
+  --projected-crs EPSG:32618 \
+  --area-crs EPSG:5070 \
+  --raw-dir input/spatial/usgs/02089000/nldi \
+  --output-dir output/spatial/upstream_watershed \
+  --overwrite
+
+python src/spatial/prepare_reference_aoi.py \
+  --gauge-lon -77.9975 \
+  --gauge-lat 35.3375 \
+  --projected-crs EPSG:32618 \
+  --raw-dir input/reference/aoi/goldsboro \
+  --output-dir output/spatial/reference_aoi \
+  --overwrite
+
+
+========================================================================================
+4. FLORENCE MRMS RAINFALL
+========================================================================================
+python src/rainfall/download_florence_mrms.py \
+  --start 2018-09-01T00:00:00Z \
+  --end 2018-09-27T00:00:00Z \
+  --download-dir input/rainfall/mrms/florence_2018/raw \
+  --output-dir output/rainfall/florence_acquisition \
+  --threads 6 \
+  --retries 3 \
+  --timeout-seconds 60 \
+  --allow-radaronly-fallback \
+  --min-completeness-percent 99 \
+  --max-fallback-percent 5 \
+  --overwrite
+
+# ok to use target-resolution-m 30  resolution but target-resolution-m 1000 is faster and storage efficient. 
+python src/rainfall/standardize_florence_mrms.py \
+  --inventory output/rainfall/florence_acquisition/mrms_hourly_inventory.csv \
+  --acquisition-metadata output/rainfall/florence_acquisition/mrms_acquisition_metadata.json \
+  --watershed-dir output/spatial/upstream_watershed \
+  --expected-watershed-area-km2 6232.005499 \
+  --max-watershed-area-difference-percent 5 \
+  --area-crs EPSG:5070 \
+  --target-crs EPSG:32618 \
+  --target-resolution-m 1000 \
+  --min-basin-valid-coverage-percent 99 \
+  --max-hourly-rainfall-mm 300 \
+  --max-grid-area-difference-percent 5 \
+  --output-dir output/rainfall/florence_standardized \
+  --overwrite
+
+python src/rainfall/finalize_florence_rainfall.py \
+  --hourly-spatial-qc output/rainfall/florence_standardized/hourly_spatial_qc.csv \
+  --standardization-metadata output/rainfall/florence_standardized/mrms_standardization_metadata.json \
+  --watershed-mask output/rainfall/florence_standardized/watershed_mask_1km.tif \
+  --usgs-observation-dir input/observations/usgs/02089000/florence_2018 \
+  --evaluation-start 2018-09-10T00:00:00Z \
+  --evaluation-end 2018-09-26T00:00:00Z \
+  --min-observed-q-hourly-coverage-percent 95 \
+  --min-evaluation-rainfall-mm 25 \
+  --max-evaluation-rainfall-mm 1500 \
+  --max-basin-hourly-rainfall-mm 150 \
+  --output-dir output/rainfall/florence_basin \
+  --overwrite
+
+
+========================================================================================
+5. FLORENCE HYDROLOGIC FORCING
+========================================================================================
+python src/observations/download_usgs_observations.py \
+  --site 02089000 \
+  --start 2018-09-01 \
+  --end 2018-09-26 \
+  --output-dir input/observations/usgs/02089000/florence_forcing \
+  --overwrite
+
+python src/hydrology/prepare_florence_forcing.py \
+  --basin-hourly-rainfall output/rainfall/florence_basin/basin_hourly_rainfall.csv \
+  --rainfall-metadata output/rainfall/florence_basin/rainfall_final_metadata.json \
+  --usgs-observation-dir input/observations/usgs/02089000/florence_forcing \
+  --watershed-area-km2 6232.005499 \
+  --warmup-start 2018-09-01T00:00:00Z \
+  --evaluation-start 2018-09-10T00:00:00Z \
+  --evaluation-end 2018-09-26T00:00:00Z \
+  --min-warmup-q-coverage-percent 95 \
+  --min-evaluation-q-coverage-percent 95 \
+  --max-negative-q-count 0 \
+  --output-dir output/hydrology/florence_forcing \
+  --overwrite
+
+
+========================================================================================
+6. NHDPLUS NETWORK, SUBCATCHMENTS, RAINFALL ZONES AND ROUTING
+========================================================================================
+python src/models/common/download_nhdplus.py \
+  --hu4 0302 \
+  --output-dir input/hydrography/nhdplus_hr_hu4_0302 \
+  --overwrite
+
+python src/models/common/build_upstream_network.py \
+  --gdb input/hydrography/nhdplus_hr_hu4_0302/extracted/NHDPLUS_H_0302_HU4_GDB.gdb \
+  --basin output/spatial/upstream_watershed/usgs_02089000_upstream_basin.geojson \
+  --gauge-lon -77.9975 \
+  --gauge-lat 35.3375 \
+  --expected-basin-area-km2 6232.005499 \
+  --candidate-radius-m 1500 \
+  --max-gauge-snap-distance-m 500 \
+  --max-outlet-da-error-percent 5 \
+  --min-catchment-coverage-percent 98 \
+  --output-dir output/model_development/network \
+  --overwrite
+
+python src/models/common/build_subcatchments.py \
+  --framework-gpkg output/model_development/network/usgs_02089000_upstream_nhdplus_framework.gpkg \
+  --routing-edges output/model_development/network/upstream_routing_edges.csv \
+  --framework-metadata output/model_development/network/framework_metadata.json \
+  --authoritative-basin output/spatial/upstream_watershed/usgs_02089000_upstream_basin.geojson \
+  --target-area-km2 150 \
+  --min-area-km2 50 \
+  --max-area-km2 300 \
+  --min-domain-coverage-percent 99.5 \
+  --min-subcatchment-count 20 \
+  --max-subcatchment-count 80 \
+  --output-dir output/model_development/subcatchments \
+  --overwrite
+
+python src/models/common/prepare_rainfall_zones.py \
+  --subcatchments-gpkg output/model_development/subcatchments/modeling_subcatchments.gpkg \
+  --subcatchment-layer modeling_subcatchments \
+  --subcatchment-metadata output/model_development/subcatchments/modeling_subcatchment_metadata.json \
+  --watershed-mask output/rainfall/florence_standardized/watershed_mask_1km.tif \
+  --min-raw-zone-coverage-percent 98 \
+  --max-residual-fill-percent 2 \
+  --min-cells-per-subcatchment 50 \
+  --output-dir output/model_development/rainfall_zones \
+  --overwrite
+
+python src/models/common/build_routing_features.py \
+  --subcatchments-gpkg output/model_development/subcatchments/modeling_subcatchments.gpkg \
+  --subcatchment-layer modeling_subcatchments \
+  --routing output/model_development/subcatchments/modeling_subcatchment_routing.csv \
+  --raw-reach-map output/model_development/subcatchments/raw_reach_to_subcatchment.csv \
+  --framework-gpkg output/model_development/network/usgs_02089000_upstream_nhdplus_framework.gpkg \
+  --flowline-layer upstream_flowlines \
+  --expected-subcatchments 37 \
+  --output-dir output/model_development/routing_features \
+  --overwrite
+
+
+========================================================================================
+7. HISTORICAL 2015-2017 MODEL-DEVELOPMENT RAINFALL + USGS Q
+========================================================================================
+python src/models/common/build_historical_basin_rainfall.py \
+  --start 2015-05-10T00:00:00Z \
+  --end 2018-01-01T00:00:00Z \
+  --watershed-mask output/rainfall/florence_standardized/watershed_mask_1km.tif \
+  --output-dir output/rainfall/historical_basin \
+  --workers 6 \
+  --timeout-seconds 90 \
+  --retries 5 \
+  --allow-radaronly-fallback \
+  --min-completeness-percent 99 \
+  --max-fallback-percent 0.05 \
+  --min-basin-valid-coverage-percent 99 \
+  --checkpoint-hours 24 \
+  --overwrite
+
+# Guarded repair of the one documented dry historical hour.
+python src/models/common/repair_dry_rainfall_gaps.py \
+  --archive-dir output/rainfall/historical_basin \
+  --timestamp 2016-10-11T16:00:00Z \
+  --context-hours 6 \
+  --dry-threshold-mm 0.05
+
+python src/models/common/check_historical_rainfall.py \
+  --hourly-rainfall output/rainfall/historical_basin/multiyear_basin_hourly_rainfall.csv \
+  --source-signatures output/rainfall/historical_basin/source_grid_signatures.csv \
+  --missing-hours output/rainfall/historical_basin/missing_hours.csv \
+  --fallback-hours output/rainfall/historical_basin/fallback_hours.csv \
+  --start 2015-05-10T00:00:00Z \
+  --end 2018-01-01T00:00:00Z \
+  --min-completeness-percent 99 \
+  --min-basin-coverage-percent 99 \
+  --max-fallback-hours 50 \
+  --max-documented-dry-hours 1 \
+  --max-consecutive-missing-hours 24 \
+  --output-dir output/rainfall/historical_qc
+
+python src/models/common/prepare_historical_usgs_discharge.py \
+  --site 02089000 \
+  --rainfall output/rainfall/historical_basin/multiyear_basin_hourly_rainfall.csv \
+  --rainfall-final-metadata output/rainfall/historical_qc/multiyear_rainfall_final_metadata.json \
+  --start 2015-05-10T00:00:00Z \
+  --training-end 2017-01-01T00:00:00Z \
+  --end 2018-01-01T00:00:00Z \
+  --usgs-output-dir input/observations/usgs/02089000/model_development \
+  --output-dir output/model_development/historical_usgs \
+  --usgs-chunk-days 30 \
+  --min-q-hourly-coverage-percent 75 \
+  --min-period-q-availability-percent 90 \
+  --min-train-rows 5000 \
+  --min-validation-rows 5000 \
+  --overwrite
+
+python src/models/common/build_spatial_rainfall_archive.py \
+  --start 2015-05-10T00:00:00Z \
+  --end 2018-01-01T00:00:00Z \
+  --reference-basin-rainfall output/rainfall/historical_basin/multiyear_basin_hourly_rainfall.csv \
+  --zone-raster output/model_development/rainfall_zones/subcatchment_rainfall_zones_1km.tif \
+  --zone-lookup output/model_development/rainfall_zones/subcatchment_rainfall_zone_lookup.csv \
+  --zone-metadata output/model_development/rainfall_zones/subcatchment_rainfall_zone_metadata.json \
+  --workers 6 \
+  --timeout-seconds 90 \
+  --retries 5 \
+  --resampling bilinear \
+  --max-basin-mean-abs-error-mm 0.01 \
+  --min-zone-valid-coverage-percent 99 \
+  --min-available-hour-success-percent 99 \
+  --output-dir output/model_development/historical_spatial_rainfall \
+  --overwrite
+
+
+
+========================================================================================
+7B. EVENT-CRITICAL DOCUMENTED DRY-HOUR REPAIRS
+========================================================================================
+# These are NOT temporal interpolation. Each command refuses the zero repair unless
+# surrounding observed MRMS basin-mean AND basin-maximum rainfall are below 0.001 mm.
+
+# 2015-11-14 16:00 UTC: documented calibration-event dry-source gap.
+python src/models/common/apply_documented_dry_hour_repair.py \
+  --basin-rainfall output/rainfall/historical_basin/multiyear_basin_hourly_rainfall.csv \
+  --spatial-rainfall output/model_development/historical_spatial_rainfall/spatial_subcatchment_rainfall_wide.csv \
+  --target-time 2015-11-14T16:00:00Z \
+  --evidence-start 2015-11-14T12:00:00Z \
+  --evidence-end 2015-11-14T20:00:00Z \
+  --dry-threshold-mm 0.001 \
+  --minimum-evidence-hours 8 \
+  --output-dir output/model_development/rainfall_gap_audit/20151114T1600 \
+  --overwrite-audit
+
+# 2017-04-27 12:00 and 13:00 UTC: consecutive validation-event source gaps.
+# The recovered audit shows all surrounding subcatchments effectively dry.
+python src/models/common/apply_documented_dry_hour_repair.py \
+  --basin-rainfall output/rainfall/historical_basin/multiyear_basin_hourly_rainfall.csv \
+  --spatial-rainfall output/model_development/historical_spatial_rainfall/spatial_subcatchment_rainfall_wide.csv \
+  --target-time 2017-04-27T12:00:00Z \
+  --evidence-start 2017-04-27T04:00:00Z \
+  --evidence-end 2017-04-27T20:00:00Z \
+  --dry-threshold-mm 0.001 \
+  --minimum-evidence-hours 14 \
+  --output-dir output/model_development/rainfall_gap_audit/20170427T1200 \
+  --overwrite-audit
+
+python src/models/common/apply_documented_dry_hour_repair.py \
+  --basin-rainfall output/rainfall/historical_basin/multiyear_basin_hourly_rainfall.csv \
+  --spatial-rainfall output/model_development/historical_spatial_rainfall/spatial_subcatchment_rainfall_wide.csv \
+  --target-time 2017-04-27T13:00:00Z \
+  --evidence-start 2017-04-27T04:00:00Z \
+  --evidence-end 2017-04-27T20:00:00Z \
+  --dry-threshold-mm 0.001 \
+  --minimum-evidence-hours 14 \
+  --output-dir output/model_development/rainfall_gap_audit/20170427T1300 \
+  --overwrite-audit
+
+
+
+========================================================================================
+8. FLORENCE JUNE-SEPTEMBER SPATIAL RAINFALL WARMUP ARCHIVE
+========================================================================================
+python src/models/common/build_historical_basin_rainfall.py \
+  --start 2018-06-01T00:00:00Z \
+  --end 2018-09-27T00:00:00Z \
+  --watershed-mask output/rainfall/florence_standardized/watershed_mask_1km.tif \
+  --output-dir output/rainfall/florence_warmup_basin \
+  --workers 6 \
+  --timeout-seconds 90 \
+  --retries 5 \
+  --allow-radaronly-fallback \
+  --min-completeness-percent 99 \
+  --max-fallback-percent 0.10 \
+  --min-basin-valid-coverage-percent 99 \
+  --checkpoint-hours 24 \
+  --overwrite
+
+python src/models/common/build_spatial_rainfall_archive.py \
+  --start 2018-06-01T00:00:00Z \
+  --end 2018-09-27T00:00:00Z \
+  --reference-basin-rainfall output/rainfall/florence_warmup_basin/multiyear_basin_hourly_rainfall.csv \
+  --zone-raster output/model_development/rainfall_zones/subcatchment_rainfall_zones_1km.tif \
+  --zone-lookup output/model_development/rainfall_zones/subcatchment_rainfall_zone_lookup.csv \
+  --zone-metadata output/model_development/rainfall_zones/subcatchment_rainfall_zone_metadata.json \
+  --workers 6 \
+  --timeout-seconds 90 \
+  --retries 5 \
+  --resampling bilinear \
+  --max-basin-mean-abs-error-mm 0.01 \
+  --min-zone-valid-coverage-percent 99 \
+  --min-available-hour-success-percent 99 \
+  --output-dir output/model_development/florence_spatial_rainfall \
+  --overwrite
+
+
+========================================================================================
+9. RETAINED PHYSICS V3.5 DEVELOPMENT EVENT LIBRARY
+========================================================================================
+# Exact historical V3.5 development inventory: 5 calibration blocks (2015-2016)
+# and 3 temporal-validation blocks (2017). Florence is NOT used in this step.
+python src/models/physics/prepare_v3_5_event_library.py \
+  --spatial-rainfall output/model_development/historical_spatial_rainfall/spatial_subcatchment_rainfall_wide.csv \
+  --usgs-q-hourly output/model_development/historical_usgs/rainfall_discharge_hourly_full.csv \
+  --routing-features output/model_development/routing_features/common_subcatchment_routing_features.csv \
+  --expected-subcatchments 37 \
+  --objective-warmup-hours 72 \
+  --min-rainfall-completeness-percent 100 \
+  --output-dir output/model_development/v3_5_event_library \
+  --overwrite
+
+
+========================================================================================
+10. ERA5-LAND STATE / ET0 / DEEP-WETNESS SCALING FOR V3.5
+========================================================================================
+python src/models/physics/download_training_state.py \
+  --event-blocks output/model_development/v3_5_event_library/event_blocks.csv \
+  --subcatchments output/model_development/subcatchments/modeling_subcatchments.gpkg \
+  --antecedent-days 45 \
+  --bbox-padding-deg 0.15 \
+  --start-limit 2015-01-01T00:00:00Z \
+  --end-limit 2018-01-01T00:00:00Z \
+  --output-dir input/model_development/era5_training \
+  --overwrite-manifests
+
+python -m pip install --upgrade h5py h5netcdf
+
+python src/models/physics/standardize_state.py \
+  --input-dir input/model_development/era5_training \
+  --manifest input/model_development/era5_training/era5_land_state_manifest.csv \
+  --event-blocks output/model_development/v3_5_event_library/event_blocks.csv \
+  --antecedent-days 45 \
+  --subcatchments output/model_development/subcatchments/modeling_subcatchments.gpkg \
+  --expected-subcatchments 37 \
+  --area-crs EPSG:32618 \
+  --min-subcatchment-grid-coverage-percent 99 \
+  --min-required-variable-coverage-percent 99.9 \
+  --output-dir output/model_development/v3_5_era5_state \
+  --overwrite
+
+python src/models/physics/calculate_et0.py \
+  --era5-hourly output/model_development/v3_5_era5_state/era5_land_subcatchment_hourly.csv.gz \
+  --event-blocks output/model_development/v3_5_event_library/event_blocks.csv \
+  --antecedent-days 45 \
+  --expected-subcatchments 37 \
+  --soil-state-lower-quantile 0.05 \
+  --soil-state-upper-quantile 0.95 \
+  --min-soil-state-span-m3m3 0.02 \
+  --min-required-et0-coverage-percent 99.9 \
+  --max-hourly-et0-mm 3 \
+  --max-daily-et0-mm 20 \
+  --output-dir output/model_development/v3_5_dynamic_state_et0 \
+  --overwrite
+
+python src/models/physics/standardize_deep_state.py \
+  --input-dir input/model_development/era5_training \
+  --manifest input/model_development/era5_training/era5_land_deep_manifest.csv \
+  --event-blocks output/model_development/v3_5_event_library/event_blocks.csv \
+  --subcatchments output/model_development/subcatchments/modeling_subcatchments.gpkg \
+  --expected-subcatchments 37 \
+  --area-crs EPSG:32618 \
+  --lower-quantile 0.05 \
+  --upper-quantile 0.95 \
+  --min-scaling-span-m3m3 0.005 \
+  --min-subcatchment-grid-coverage-percent 99 \
+  --output-dir output/model_development/v3_5_deep_state \
+  --overwrite
+
+
+========================================================================================
+11. RETAINED PHYSICS MODEL — V3.5 ROUND-2 CANDIDATE 11
+========================================================================================
+# No optimization is run here. The source-controlled retained artifact is:
+# src/models/physics/retained/physics_v3_5_round2_candidate11_parameters.json
+#
+# Provenance: this round-2 candidate was selected using Florence observed Q.
+# Therefore Florence is a calibration/selection event for this retained artifact,
+# not an independent validation event. This is the historical project choice.
+
+
+========================================================================================
+12. PREPARE AND TRAIN RETAINED ML V4
+========================================================================================
+python src/models/ml/prepare_ml_v4_features.py \
+  --spatial-rainfall output/model_development/historical_spatial_rainfall/spatial_subcatchment_rainfall_wide.csv \
+  --forcing output/model_development/v3_5_event_library/development_forcing_hourly.csv \
+  --routing-features output/model_development/routing_features/common_subcatchment_routing_features.csv \
+  --train-start 2015-05-10T00:00:00Z \
+  --train-end 2017-01-01T00:00:00Z \
+  --validation-end 2018-01-01T00:00:00Z \
+  --expected-subcatchments 37 \
+  --min-routed-area-coverage-percent 99 \
+  --output-dir output/models/ml_v4_features \
+  --overwrite
+
+python src/models/ml/train_ml_v4.py \
+  --dataset output/models/ml_v4_features/ml_v4_features_2015_2017.csv.gz \
+  --metadata output/models/ml_v4_features/ml_v4_feature_metadata.json \
+  --event-blocks output/model_development/v3_5_event_library/event_blocks.csv \
+  --seed 42 \
+  --n-jobs 6 \
+  --min-validation-nse 0.30 \
+  --min-validation-kge 0.30 \
+  --max-validation-abs-pbias-percent 30 \
+  --max-validation-abs-peak-error-percent 40 \
+  --output-dir output/models/ml_v4 \
+  --overwrite
+
+
+========================================================================================
+13. PREPARE FLORENCE CONTINUOUS ERA5 STATE USING V3.5 CALIBRATION SCALING
+========================================================================================
+python src/models/physics/prepare_florence_state.py \
+  --subcatchments output/model_development/subcatchments/modeling_subcatchments.gpkg \
+  --soil-scaling output/model_development/v3_5_dynamic_state_et0/soil_state_scaling_parameters.csv \
+  --deep-scaling output/model_development/v3_5_deep_state/deep_state_scaling_parameters.csv \
+  --start 2018-06-01T00:00:00Z \
+  --end 2018-09-26T00:00:00Z \
+  --bbox-padding-deg 0.15 \
+  --expected-subcatchments 37 \
+  --area-crs EPSG:32618 \
+  --min-subcatchment-grid-coverage-percent 99 \
+  --min-required-variable-coverage-percent 99.9 \
+  --output-dir output/model_development/v3_5_florence_era5 \
+  --overwrite
+
+
+========================================================================================
+14. FLORENCE PHYSICS V3.5 + ML V4 DISCHARGE PREDICTIONS
+========================================================================================
+python src/models/physics/predict_physics_v3_5_florence_continuous.py \
+  --rainfall-wide output/model_development/florence_spatial_rainfall/spatial_subcatchment_rainfall_wide.csv \
+  --hydrologic-forcing output/hydrology/florence_forcing/hydrologic_forcing_hourly.csv \
+  --dynamic-state-et0 output/model_development/v3_5_florence_era5/florence_dynamic_state_et0_subcatchment_hourly.csv.gz \
+  --deep-state output/model_development/v3_5_florence_era5/florence_deep_state_subcatchment_hourly.csv.gz \
+  --routing-features output/model_development/routing_features/common_subcatchment_routing_features.csv \
+  --routing output/model_development/subcatchments/modeling_subcatchment_routing.csv \
+  --frozen-parameters src/models/physics/retained/physics_v3_5_round2_candidate11_parameters.json \
+  --warmup-start 2018-06-01T00:00:00Z \
+  --evaluation-start 2018-09-10T00:00:00Z \
+  --evaluation-end 2018-09-26T00:00:00Z \
+  --expected-subcatchments 37 \
+  --max-rain-gap-hours 6 \
+  --max-et0-gap-hours 6 \
+  --output-dir output/models/physics_final_florence \
+  --overwrite
+
+python src/models/ml/predict_ml_v4_florence.py \
+  --spatial-rainfall output/model_development/florence_spatial_rainfall/spatial_subcatchment_rainfall_wide.csv \
+  --routing-features output/model_development/routing_features/common_subcatchment_routing_features.csv \
+  --feature-metadata output/models/ml_v4_features/ml_v4_feature_metadata.json \
+  --frozen-model output/models/ml_v4/ml_v4_model.joblib \
+  --forcing-dir output/hydrology/florence_forcing \
+  --feature-start 2018-06-01T00:00:00Z \
+  --feature-end 2018-09-27T00:00:00Z \
+  --evaluation-start 2018-09-10T00:00:00Z \
+  --evaluation-end 2018-09-26T00:00:00Z \
+  --expected-subcatchments 37 \
+  --min-routed-area-coverage-percent 99 \
+  --min-evaluation-q-coverage-percent 90 \
+  --output-dir output/models/ml_v4_florence \
+  --overwrite
+
+
+========================================================================================
+15. NOAA FIM LIBRARY DOWNLOAD
+========================================================================================
+python src/flood_mapping/download_noaa_fim.py \
+  --site GLDN7 \
+  --wfo RAH \
+  --output-dir input/reference/noaa_fim/gldn7 \
+  --overwrite
+
+
+========================================================================================
+16. RETAINED MODEL COMPARISON — USGS / PHYSICS V3.5 / ML V4
+========================================================================================
+# daily_stage_discharge.csv is intentionally compact (7 columns).
+# USGS daily maxima retain native 15-minute observations.
+python src/comparison.py \
+  --usgs-observations input/observations/usgs/02089000/florence_2018/usgs_event_observations.csv \
+  --physics-predictions output/models/physics_final_florence/physics_v3_5_florence_2018_predictions.csv \
+  --ml-predictions output/models/ml_v4_florence/ml_v4_florence_2018_predictions.csv \
+  --q-to-h output/observations/florence_hq/florence_effective_q_to_h_surrogate.csv \
+  --noaa-root input/reference/noaa_fim/gldn7/shapefiles \
+  --gage-datum-navd88-ft 41.926 \
+  --daily-start 2018-09-14 \
+  --daily-days 10 \
+  --output-dir output/comparison/florence_2018 \
+  --overwrite
+
+# Historical accepted regression table for Sep 14-23:
+# reference/accepted_v3_5_ml_v4_daily_stage_reference.csv
+
+
+========================================================================================
+17A. NOAA FIM SMALL-DOMAIN FLOOD MAPPING
+========================================================================================
+python src/flood_mapping/map_noaa_fim.py \
+  --comparison output/comparison/florence_2018/daily_stage_discharge_noaa_fim.csv \
+  --noaa-root input/reference/noaa_fim/gldn7/shapefiles \
+  --crs EPSG:32618 \
+  --resolution-m 10 \
+  --output-dir output/flood_mapping/noaa_fim \
+  --overwrite
+
+
+========================================================================================
+17B. RETAINED PRODUCTION TERRAIN / HYDROGRAPHY PREFLIGHT
+========================================================================================
+# IMPORTANT:
+# The accepted V3.5/ML flood-mapping workflow DOES NOT use the later 10 m
+# full-AOI ImageServer DEM. It uses the original unconditioned 2014 1 m lidar
+# DEM and the retained Goldsboro NHDPlus HR mainstem reference.
+#
+# These are historical production assets. Do not substitute the 10 m
+# output/terrain/full_aoi DEM into the retained mapper.
+
+python - <<'PY'
+from pathlib import Path
+
+required = [
+    Path("output/terrain/goldsboro_dem_2014/goldsboro_dem_2014_1m_navd88_m.tif"),
+    Path("output/hydrography/nhdplus_hr_goldsboro_reference/nhdplus_hr_goldsboro_reference.gpkg"),
+]
+missing = [str(p) for p in required if not p.exists()]
+if missing:
+    print("MISSING_RETAINED_GOLDSBORO_ASSETS")
+    for p in missing:
+        print(" -", p)
+    raise SystemExit(2)
+
+print("PASS_RETAINED_GOLDSBORO_1M_ASSETS_PRESENT")
+PY
+
+
+# Not important but ok to explore 
+python src/terrain/download_aoi_dem.py \
+  --aoi output/spatial/reference_aoi/florence_analysis_aoi.geojson \
+  --resolution-m 10 \
+  --target-crs EPSG:32618 \
+  --max-tile-pixels 2000 \
+  --output-dir output/terrain/full_aoi \
+  --overwrite
+
+
+========================================================================================
+18. RETAINED PRODUCTION FLOOD MAPPING — 1 m LIDAR + LONGITUDINAL WSE
+========================================================================================
+# Exact retained mapper restored from the original project.
+# Same hydraulic/terrain mapper is used for Physics V3.5 and ML V4.
+#
+
+
+(.venv) asadzaman@Asads-MacBook-Pro v3_5_v2 % mkdir -p output/terrain/goldsboro_dem_2014
+mkdir -p output/hydrography/nhdplus_hr_goldsboro_reference
+
+cp \
+"goldsboro_dem_2014/goldsboro_dem_2014_1m_navd88_m.tif" \
+output/terrain/goldsboro_dem_2014/
+
+cp \
+"nhdplus_hr_goldsboro_reference/nhdplus_hr_goldsboro_reference.gpkg" \
+output/hydrography/nhdplus_hr_goldsboro_reference/
+
+
+python src/terrain/prepare_aoi_mainstem.py \
+  --gdb input/hydrography/nhdplus_hr_hu4_0302/extracted/NHDPLUS_H_0302_HU4_GDB.gdb \
+  --aoi output/spatial/reference_aoi/florence_analysis_aoi.geojson \
+  --river-name "Neuse River" \
+  --gauge-lon -77.9975 \
+  --gauge-lat 35.3375 \
+  --projected-crs EPSG:32618 \
+  --output-dir output/terrain/full_aoi \
+  --overwrite
+
+
+# Physics V3.5
+python src/flood_mapping/generate_discharge_hand_wse_inundation_v2.py \
+  --physics-predictions output/models/physics_final_florence/physics_v3_5_florence_2018_predictions.csv \
+  --q-to-h output/observations/florence_hq/florence_effective_q_to_h_surrogate.csv \
+  --dem-1m output/terrain/goldsboro_dem_2014/goldsboro_dem_2014_1m_navd88_m.tif \
+  --mainstem-gpkg output/hydrography/nhdplus_hr_goldsboro_reference/nhdplus_hr_goldsboro_reference.gpkg \
+  --mainstem-layer named_neuse_river \
+  --gage-datum-navd88-ft 41.926 \
+  --gauge-lon -77.9975 \
+  --gauge-lat 35.3375 \
+  --daily-start 2018-09-14 \
+  --daily-days 10 \
+  --profile-spacing-m 10 \
+  --mad-sigma 3 \
+  --minimum-residual-window-m 0.35 \
+  --maximum-longitudinal-slope-m-per-km 5 \
+  --seed-buffer-m 3 \
+  --connectivity 8 \
+  --output-dir output/flood_mapping/florence_2018_physics_v3_5_retained \
+  --overwrite
+
+# ML V4 — same exact mapper; it accepts q_pred_m3s.
+python src/flood_mapping/generate_discharge_hand_wse_inundation_v2.py \
+  --physics-predictions output/models/ml_v4_florence/ml_v4_florence_2018_predictions.csv \
+  --q-to-h output/observations/florence_hq/florence_effective_q_to_h_surrogate.csv \
+  --dem-1m output/terrain/goldsboro_dem_2014/goldsboro_dem_2014_1m_navd88_m.tif \
+  --mainstem-gpkg output/hydrography/nhdplus_hr_goldsboro_reference/nhdplus_hr_goldsboro_reference.gpkg \
+  --mainstem-layer named_neuse_river \
+  --gage-datum-navd88-ft 41.926 \
+  --gauge-lon -77.9975 \
+  --gauge-lat 35.3375 \
+  --daily-start 2018-09-14 \
+  --daily-days 10 \
+  --profile-spacing-m 10 \
+  --mad-sigma 3 \
+  --minimum-residual-window-m 0.35 \
+  --maximum-longitudinal-slope-m-per-km 5 \
+  --seed-buffer-m 3 \
+  --connectivity 8 \
+  --output-dir output/flood_mapping/florence_2018_ml_v4_retained \
+  --overwrite
+
+# Compare retained daily flood areas.
+python - <<'PY'
+import pandas as pd
+
+p = pd.read_csv(
+    "output/flood_mapping/florence_2018_physics_v3_5_retained/daily_flood_summary.csv"
+)
+
+m = pd.read_csv(
+    "output/flood_mapping/florence_2018_ml_v4_retained/daily_flood_summary.csv"
+)
+
+if "state_type" in p.columns:
+    p = p[p["state_type"] == "daily_max"].copy()
+
+if "state_type" in m.columns:
+    m = m[m["state_type"] == "daily_max"].copy()
+
+p = p[
+    [
+        "date",
+        "predicted_q_m3s",
+        "predicted_gage_height_ft",
+        "flood_area_km2",
+    ]
+].rename(columns={
+    "predicted_q_m3s": "physics_q_m3s",
+    "predicted_gage_height_ft": "physics_stage_ft",
+    "flood_area_km2": "physics_flood_km2",
+})
+
+m = m[
+    [
+        "date",
+        "predicted_q_m3s",
+        "predicted_gage_height_ft",
+        "flood_area_km2",
+    ]
+].rename(columns={
+    "predicted_q_m3s": "ml_q_m3s",
+    "predicted_gage_height_ft": "ml_stage_ft",
+    "flood_area_km2": "ml_flood_km2",
+})
+
+x = p.merge(m, on="date", how="outer").sort_values("date")
+
+x["area_difference_km2"] = (
+    x["physics_flood_km2"] - x["ml_flood_km2"]
+)
+
+x["area_difference_percent_vs_physics"] = (
+    100.0 * x["area_difference_km2"] / x["physics_flood_km2"]
+)
+
+out = "output/flood_mapping/retained_physics_ml_daily_comparison.csv"
+x.to_csv(out, index=False)
+
+print(x.to_string(index=False))
+print()
+print("Wrote:", out)
+PY
+
+
+========================================================================================
+19. IMPACT / EXPOSURE INPUTS FOR THE FULL ORIGINAL AOI
+========================================================================================
+python src/impact/acquire_inputs.py \
+  --aoi output/spatial/reference_aoi/florence_analysis_aoi.geojson \
+  --project third-oarlock-496708-n7 \
+  --out-dir input/impact/florence_2018/full_aoi \
+  --osm-tile-deg 0.20 \
+  --osm-min-tile-deg 0.025 \
+  --overwrite
+
+
+========================================================================================
+20A. NOAA FIM SMALL-DOMAIN IMPACT ASSESSMENT
+========================================================================================
+python src/impact/noaa_fim/compute_impact.py \
+  --comparison output/comparison/florence_2018/daily_stage_discharge_noaa_fim.csv \
+  --noaa-root input/reference/noaa_fim/gldn7/shapefiles \
+  --input-dir input/impact/florence_2018/full_aoi \
+  --output-dir output/impact/florence_2018/noaa_fim \
+  --crs EPSG:32618 \
+  --overwrite
+
+python src/impact/noaa_fim/create_asset_rasters.py \
+  --peak-summary output/impact/florence_2018/noaa_fim/peak_impact_summary.csv \
+  --noaa-root input/reference/noaa_fim/gldn7/shapefiles \
+  --input-dir input/impact/florence_2018/full_aoi \
+  --resolution-m 10 \
+  --crs EPSG:32618 \
+  --output-dir output/impact/florence_2018/noaa_fim/asset_rasters \
+  --overwrite
+
+
+========================================================================================
+20B. FULL ORIGINAL-AOI IMPACT ASSESSMENT + MAP-READY TIFFS
+========================================================================================
+mkdir -p output/spatial/goldsboro_florence_modeling_aoi
+
+cp \
+"goldsboro_florence_modeling_aoi/goldsboro_florence_modeling_aoi.geojson" \
+output/spatial/goldsboro_florence_modeling_aoi/
+
+
+
+python src/impact/full_aoi/compute_impact.py \
+  --aoi output/spatial/goldsboro_florence_modeling_aoi/goldsboro_florence_modeling_aoi.geojson \
+  --input-dir input/impact/florence_2018/full_aoi \
+  --hazard "Physics=output/flood_mapping/florence_2018_physics_v3_5_retained/florence_physics_v2_peak_inundation.tif" \
+  --hazard "ML=output/flood_mapping/florence_2018_ml_v4_retained/florence_physics_v2_peak_inundation.tif" \
+  --out-dir output/impact/florence_2018/modeling_aoi \
+  --min-hazard-aoi-coverage 0.995 \
+  --overwrite
+
+
+
+mkdir -p output/models/usgs_observed_driver
+
+python - <<'PY'
+import pandas as pd
+from pathlib import Path
+
+src = Path(
+    "input/observations/usgs/02089000/florence_2018/"
+    "usgs_event_observations.csv"
+)
+
+out = Path(
+    "output/models/usgs_observed_driver/"
+    "usgs_observed_discharge_driver.csv"
+)
+
+df = pd.read_csv(src)
+
+required = ["datetime_utc", "discharge_cms"]
+missing = [c for c in required if c not in df.columns]
+if missing:
+    raise RuntimeError(
+        f"Missing required USGS columns: {missing}; "
+        f"available={list(df.columns)}"
+    )
+
+x = df[["datetime_utc", "discharge_cms"]].copy()
+
+x["interval_end_utc"] = pd.to_datetime(
+    x["datetime_utc"],
+    utc=True,
+    errors="coerce",
+)
+
+x["q_pred_m3s"] = pd.to_numeric(
+    x["discharge_cms"],
+    errors="coerce",
+)
+
+x = (
+    x.dropna(subset=["interval_end_utc", "q_pred_m3s"])
+     .sort_values("interval_end_utc")
+     .drop_duplicates("interval_end_utc")
+)
+
+x = x[
+    ["interval_end_utc", "q_pred_m3s"]
+]
+
+x.to_csv(out, index=False)
+
+print("=" * 90)
+print("USGS OBSERVED-DISCHARGE FLOOD-MAPPING DRIVER")
+print("=" * 90)
+print("Rows       :", len(x))
+print("Start      :", x["interval_end_utc"].min())
+print("End        :", x["interval_end_utc"].max())
+print("Peak Q     :", f"{x['q_pred_m3s'].max():.3f} m3/s")
+print("Output     :", out)
+print("Status     : PASS_USGS_OBSERVED_DRIVER_READY")
+PY
+
+python src/flood_mapping/prepare_usgs_observed_mapping_driver.py \
+  --usgs-observations input/observations/usgs/02089000/florence_2018/usgs_event_observations.csv \
+  --output output/models/usgs_observed_driver/usgs_observed_discharge_stage_driver.csv \
+  --overwrite
+
+python src/flood_mapping/generate_discharge_hand_wse_inundation_v2.py \
+  --physics-predictions output/models/usgs_observed_driver/usgs_observed_discharge_stage_driver.csv \
+  --gage-height-column gage_height_ft \
+  --source-name "USGS observed" \
+  --peak-alias-prefix florence_usgs_observed \
+  --q-to-h output/observations/florence_hq/florence_effective_q_to_h_surrogate.csv \
+  --dem-1m output/terrain/goldsboro_dem_2014/goldsboro_dem_2014_1m_navd88_m.tif \
+  --mainstem-gpkg output/hydrography/nhdplus_hr_goldsboro_reference/nhdplus_hr_goldsboro_reference.gpkg \
+  --mainstem-layer named_neuse_river \
+  --gage-datum-navd88-ft 41.926 \
+  --gauge-lon -77.9975 \
+  --gauge-lat 35.3375 \
+  --daily-start 2018-09-14 \
+  --daily-days 10 \
+  --profile-spacing-m 10 \
+  --mad-sigma 3 \
+  --minimum-residual-window-m 0.35 \
+  --maximum-longitudinal-slope-m-per-km 5 \
+  --seed-buffer-m 3 \
+  --connectivity 8 \
+  --output-dir output/flood_mapping/florence_2018_usgs_observed_retained \
+  --overwrite
+
+python src/impact/full_aoi/compute_impact.py \
+  --aoi output/spatial/goldsboro_florence_modeling_aoi/goldsboro_florence_modeling_aoi.geojson \
+  --input-dir input/impact/florence_2018/full_aoi \
+  --hazard "Observed=output/flood_mapping/florence_2018_usgs_observed_retained/florence_usgs_observed_peak_inundation.tif" \
+  --hazard "Physics=output/flood_mapping/florence_2018_physics_v3_5_retained/florence_physics_v2_peak_inundation.tif" \
+  --hazard "ML=output/flood_mapping/florence_2018_ml_v4_retained/florence_physics_v2_peak_inundation.tif" \
+  --out-dir output/impact/florence_2018/modeling_aoi_3source \
+  --min-hazard-aoi-coverage 0.995 \
+  --overwrite
+
+========================================================================================
+21. FINAL PRIMARY OUTPUTS
+========================================================================================
+# Model comparison / only retained validation:
+#   output/comparison/florence_2018/model_metrics.csv
+#   output/comparison/florence_2018/daily_stage_discharge.csv
+#   output/comparison/florence_2018/daily_stage_discharge_noaa_fim.csv
+# NOAA FIM maps: output/flood_mapping/noaa_fim/
+# Full-AOI maps: output/flood_mapping/full_aoi/physics/ and /ml/
+# NOAA impacts: output/impact/florence_2018/noaa_fim/
+# Full-AOI impacts and QGIS TIFFs: output/impact/florence_2018/full_aoi/
+
+
+========================================================================================
+22. FRONTEND DASHBOARD V2 — INTERACTIVE FLOOD / HYDRAULICS / IMPACT VISUALIZATION
+========================================================================================
+
+python src/frontend/build_dashboard_v2.py \
+  --project-root . \
+  --output-dir output/frontend_v2 \
+  --rainfall-hourly-dir output/rainfall/florence_standardized/hourly \
+  --rainfall-start 2018-09-14 \
+  --rainfall-end 2018-09-23 \
+  --overwrite
+
+python src/frontend/fix_dashboard_impacted_roads.py \
+  --project-root . \
+  --output-dir output/frontend_v2 \
+  --start 2018-09-14 \
+  --end 2018-09-23 \
+  --overwrite
+
+
+# Expected:
+# PASS_FLORENCE_DASHBOARD_V2_BUNDLE_READY
+
+python -m pip install -r requirements-frontend.txt
+
+python src/frontend/dashboard_v2_check.py \
+  --root output/frontend_v2
+
+# Expected:
+# PASS_FLORENCE_DASHBOARD_V2_PREFLIGHT
+
+# Serve locally:
+python src/frontend/serve_dashboard_v2.py \
+  --root output/frontend_v2 \
+  --host 127.0.0.1 \
+  --port 8008
+
+
+# Open in browser:
+# http://127.0.0.1:8008/dashboard/

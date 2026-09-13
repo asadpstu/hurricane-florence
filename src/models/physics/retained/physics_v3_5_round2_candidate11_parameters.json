@@ -1,0 +1,36 @@
+{
+  "build": "PHYSICS_V3_5_FLORENCE_VOLUME_PEAK_TRADEOFF_ROUND2_RETAINED_CANDIDATE11",
+  "model": "Physics V3.5 moisture-dependent interflow \u2014 Florence round-2 retained Candidate 11",
+  "candidate_id": 11,
+  "parameter_source": "historical Physics V3.5 moisture-interflow optimum + documented round-2 factors",
+  "florence_observed_q_used_for_selection": true,
+  "florence_independent_validation_after_this": false,
+  "selection_factors": {
+    "soil_capacity_factor": 2.0,
+    "runoff_beta_factor": 1.15,
+    "quick_reservoir_time_factor": 1.0
+  },
+  "reference_florence_metrics_approx": {
+    "nse": 0.887,
+    "kge": 0.831,
+    "pbias_percent": 14.7,
+    "peak_error_percent": -3.15,
+    "peak_timing_error_h": 1.0
+  },
+  "parameters": {
+    "soil_capacity_mm": 592.5429129619987,
+    "field_capacity_fraction": 0.85,
+    "runoff_beta": 8.175001407136081,
+    "soil_drainage_time_h": 1166.0371261224007,
+    "quick_reservoir_time_h": 76.22336275761705,
+    "base_reservoir_time_h": 120.32308207073268,
+    "et_multiplier": 1.1214241954172572,
+    "et_moisture_exponent": 1.0422925031546657,
+    "channel_velocity_m_s": 0.20071670144145903,
+    "deep_baseflow_floor_mm_h": 0.0693882830305926,
+    "deep_baseflow_range_mm_h": 0.045161551734750276,
+    "preferential_interflow_fraction": 0.0762435908392879,
+    "interflow_reservoir_time_h": 36.638674
+  },
+  "provenance_note": "This is the retained Florence-calibrated round-2 Candidate 11. Only soil capacity, runoff beta and quick-reservoir K were varied in that round. The remaining values are inherited from the preserved base V3.5 optimum. The original generated round-2 JSON was not present in the uploaded source ZIP, so this source-controlled artifact reconstructs the documented retained candidate."
+}

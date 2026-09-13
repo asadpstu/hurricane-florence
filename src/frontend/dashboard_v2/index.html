@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hurricane Florence 2018 — Neuse River Flood Dashboard</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <div class="brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 48 48" role="img">
+            <path d="M8 28c7-8 13-12 20-12 5 0 9 2 12 5-5-1-9 0-12 3 5-1 9 1 12 5-6-2-12-1-17 3-5 4-10 5-15 4 4-2 7-5 9-8-4 2-7 2-9 0z" fill="currentColor" opacity=".92"/>
+            <path d="M24 7c5 2 8 6 8 11-3-3-6-4-10-3 2-3 3-6 2-8z" fill="currentColor" opacity=".55"/>
+          </svg>
+        </div>
+        <div class="brand-copy">
+          <div class="brand-kicker">Neuse River · USGS 02089000</div>
+          <h1>Florence 2018 Flood Dashboard</h1>
+          <p>Physics V3.5 · ML V4 · USGS observed-driver</p>
+        </div>
+      </div>
+      <div class="build-line" id="buildStatus">Loading data…</div>
+
+      <section class="side-section">
+        <div class="side-heading">
+          <span>Map controls</span>
+          <span class="side-status" id="mapAvailability"></span>
+        </div>
+
+        <div class="side-grid">
+          <label>
+            <span>Date</span>
+            <select id="dateSelect"></select>
+          </label>
+          <label>
+            <span>Primary source</span>
+            <select id="primarySource"></select>
+          </label>
+          <label>
+            <span>Map layer</span>
+            <select id="layerSelect">
+              <option value="extent">Flood extent</option>
+              <option value="depth">Flood depth</option>
+              <option value="rainfall">Daily rainfall</option>
+              <option value="hand">HAND-equivalent terrain</option>
+              <option value="wse">Spatial WSE</option>
+              <option value="impact" hidden>Impact assessment</option>
+            </select>
+          </label>
+          <label>
+            <span>Compare</span>
+            <select id="compareMode">
+              <option value="single">Single</option>
+              <option value="side_by_side">Side by side</option>
+            </select>
+          </label>
+          <label id="secondaryWrap">
+            <span>Compare with</span>
+            <select id="secondarySource"></select>
+          </label>
+        </div>
+
+        <div class="context-block">
+          <div class="mini-title">Map context</div>
+          <div class="check-grid">
+            <label class="check"><input id="toggleWatershed" type="checkbox" checked /> <span>Upstream watershed</span></label>
+            <label class="check"><input id="toggleAoi" type="checkbox" checked /> <span>Modeling AOI</span></label>
+            <label class="check"><input id="toggleMainstem" type="checkbox" checked /> <span>Main Neuse</span></label>
+            <label class="check"><input id="toggleGauge" type="checkbox" checked /> <span>Gauge</span></label>
+          </div>
+          <button id="fitWatershedBtn" class="quiet-button" type="button">Fit upstream watershed</button>
+        </div>
+
+
+        <div class="opacity-control">
+          <div class="opacity-label-row">
+            <label for="overlayOpacity">Map overlay opacity</label>
+            <output id="opacityValue" for="overlayOpacity">78%</output>
+          </div>
+          <input id="overlayOpacity" type="range" min="0" max="100" step="1" value="78" aria-label="Map overlay opacity" />
+        </div>
+
+        <div class="map-actions">
+          <button id="playDatesBtn" class="action-button" type="button" aria-pressed="false">▶ Play 14–23 Sep</button>
+          <button id="showMapBtn" class="action-button active" type="button">Map view</button>
+        </div>
+        <div class="play-note" id="playStatus">Play advances the selected date sequentially and preserves the current map center/zoom.</div>
+      </section>
+
+      <section class="side-section impact-side">
+        <div class="side-heading">
+          <span>Impact assessment</span>
+          <span class="method-chip" id="impactDomain"></span>
+        </div>
+        <label>
+          <span>Impact map visualization</span>
+          <select id="impactMapLayer"></select>
+        </label>
+        <p class="side-note"><strong>Map impacts follow the selected date.</strong> Population, land cover and imperviousness are hard-clipped to that source/date flood extent; zero/background pixels are transparent. Peak-impact graphs below remain event-peak summaries.</p>
+
+        <div class="mini-title analysis-title">Analysis views</div>
+        <div class="analysis-switcher" role="tablist" aria-label="Analysis graph views">
+          <button class="graph-tab" data-graph="hydraulics" type="button">Hydraulics</button>
+          <button class="graph-tab" data-graph="rainfall" type="button">Rainfall</button>
+          <button class="graph-tab" data-graph="impact" type="button">Peak impact</button>
+          <button class="graph-tab" data-graph="landcover" type="button">Land-cover impact</button>
+        </div>
+        <p class="side-note">Selecting an analysis view hides the map and uses the right panel for the selected graph. Use <strong>Map view</strong> to return.</p>
+      </section>
+
+      <details class="side-method">
+        <summary>Data &amp; methodology</summary>
+        <div id="methodologyGrid" class="methodology-grid"></div>
+        <div class="noaa-note" id="noaaNote"></div>
+      </details>
+    </aside>
+
+    <main class="workspace">
+      <div class="view-stage">
+        <section class="hydraulic-float panel" aria-label="Flood hydraulics surrogate summary">
+          <div class="floating-title">
+            <strong>Flood hydraulics / surrogate</strong>
+            <span class="method-chip" id="hydraulicContext"></span>
+          </div>
+          <div class="metric-cards floating-metrics" id="hydraulicCards"></div>
+        </section>
+
+        <section id="workspace-map" class="map-panel panel workspace-view">
+          <div id="mapMessage" class="map-message hidden"></div>
+          <div id="playDateBadge" class="play-date-badge hidden" aria-live="polite"></div>
+          <div id="singleMap" class="map-canvas"></div>
+          <div id="dualMaps" class="dual-maps hidden">
+            <div>
+              <div class="map-tag" id="leftMapTag"></div>
+              <div id="leftMap" class="map-canvas"></div>
+            </div>
+            <div>
+              <div class="map-tag" id="rightMapTag"></div>
+              <div id="rightMap" class="map-canvas"></div>
+            </div>
+          </div>
+          <details id="landcoverClassLegend" class="landcover-class-legend hidden">
+            <summary>Land-cover classes</summary>
+            <div id="landcoverClassList" class="landcover-class-list"></div>
+          </details>
+          <div class="map-footer">
+            <div id="mapLegend" class="legend-box"></div>
+            <div class="preview-note">Map controls preserve the user's viewport. Playback changes dates without recentering. “Fit upstream watershed” is the only deliberate fit action.</div>
+          </div>
+        </section>
+
+        <div id="graphWorkspace" class="graph-workspace hidden workspace-view">
+          <section id="graph-hydraulics" class="graph-view hidden">
+            <div class="two-column">
+              <article class="chart-card panel">
+                <div class="chart-title-row">
+                  <div>
+                    <h2>Effective H-Q surrogate</h2>
+                    <p>Rising/falling branches with the selected hydraulic state highlighted.</p>
+                  </div>
+                </div>
+                <div class="chart-wrap tall"><canvas id="hqChart"></canvas></div>
+              </article>
+              <article class="chart-card panel">
+                <div class="chart-title-row">
+                  <div>
+                    <h2>Daily hydraulic evolution</h2>
+                    <p>Discharge, stage, gauge WSE and HAND-equivalent threshold · 14–23 Sep.</p>
+                  </div>
+                </div>
+                <div class="chart-wrap tall"><canvas id="hydraulicChart"></canvas></div>
+              </article>
+            </div>
+          </section>
+
+          <section id="graph-rainfall" class="graph-view hidden">
+            <article class="chart-card panel">
+              <div class="chart-title-row rainfall-title-row">
+                <div>
+                  <h2>MRMS daily rainfall · 14–23 September 2018</h2>
+                  <p>24-hour accumulation from the retained standardized hourly MRMS QPE. Zero/dry map pixels are transparent.</p>
+                  <p class="nhc-context"><strong>NHC/NOAA context:</strong> Hurricane Florence U.S. rainfall analysis (inches) during 13–18 September 2018 includes the extratropical phase; graphic credited by NHC to the NOAA Weather Prediction Center.</p>
+                </div>
+                <div class="rainfall-summary" id="rainfallSummary"></div>
+              </div>
+              <div class="chart-wrap medium"><canvas id="rainfallChart"></canvas></div>
+            </article>
+          </section>
+
+          <section id="graph-impact" class="graph-view hidden">
+            <article class="chart-card panel">
+              <div class="chart-title-row">
+                <div>
+                  <h2>Peak impact comparison</h2>
+                  <p>One compact source-comparison chart per impact metric.</p>
+                </div>
+              </div>
+              <div class="impact-mini-grid" id="impactMiniGrid"></div>
+            </article>
+          </section>
+
+          <section id="graph-landcover" class="graph-view hidden">
+            <article class="chart-card panel">
+              <div class="chart-title-row">
+                <div>
+                  <h2>Land-cover impact — ML / Physics / USGS</h2>
+                  <p>Affected area in the retained Goldsboro modeling AOI.</p>
+                </div>
+              </div>
+              <div class="chart-wrap large"><canvas id="landcoverChart"></canvas></div>
+              <p class="muted small">Impervious equivalent area is reported separately from NLCD classes; developed, forest and wetlands are grouped from component NLCD classes.</p>
+            </article>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
